@@ -1,62 +1,38 @@
-// js/app.js - Versión de Diagnóstico Avanzado para GitHub Pages
+// js/app.js
 
-let map;
-let markersGroup;
+// Inicializo el mapa centrado en San Martín
+const map = L.map('map').setView([-34.5478, -58.5810], 12); 
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+}).addTo(map);
+
+let markersGroup = L.layerGroup().addTo(map);
 let locacionesData = []; 
 let marcadoresActivos = {}; 
 
-// Ponemos la inicialización en una función segura para que si algo falla, sepamos qué fue
-function inicializarMapa() {
-    try {
-        console.log("Inicializando Leaflet...");
-        map = L.map('map').setView([-34.5478, -58.5810], 12); 
-
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors'
-        }).addTo(map);
-
-        markersGroup = L.layerGroup().addTo(map);
-        console.log("Mapa e infraestructura listos.");
-        
-        // Una vez que el mapa base levantó de forma segura, llamamos al CSV
-        cargarDatosDesdeCSV();
-    } catch (error) {
-        document.getElementById("status-box").innerText = "Error al iniciar mapa base.";
-        console.error("Error crítico en Leaflet:", error);
-        alert("⚠️ Error al cargar el mapa base de OpenStreetMap. Revisá la consola (F12).");
-    }
-}
-
+// Cargo el CSV con las locaciones
 function cargarDatosDesdeCSV() {
-    // Calculamos la ruta absoluta exacta para evitar problemas de subcarpetas en GitHub
-    const urlBase = window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'));
-    const urlCompletaCSV = window.location.origin + urlBase + "/locaciones.csv";
-    
-    console.log("Buscando CSV en:", urlCompletaCSV);
-
-    fetch(urlCompletaCSV)
+    fetch("locaciones.csv")
         .then(response => {
-            if (!response.ok) {
-                throw new Error(`Estado HTTP: ${response.status}`);
-            }
+            if (!response.ok) throw new Error("No encontré el archivo locaciones.csv");
             return response.text();
         })
         .then(textoCSV => {
-            document.getElementById("status-box").innerText = "Procesando CSV...";
+            document.getElementById("status-box").innerText = "Procesando...";
             
             Papa.parse(textoCSV, {
                 header: true,
-                delimiter: ";", 
+                delimiter: ";",
                 skipEmptyLines: true,
                 complete: function(results) {
                     locacionesData = results.data;
                     
                     if (locacionesData.length > 0) {
-                        console.log("Columnas detectadas:", Object.keys(locacionesData[0]));
                         generarFiltrosDinamicos();
-                        document.getElementById("status-box").innerText = `Datos listos. Registros: ${locacionesData.length}`;
+                        document.getElementById("status-box").innerText = `Registros: ${locacionesData.length}`;
                     } else {
-                        document.getElementById("status-box").innerText = "El CSV está vacío o mal formateado.";
+                        document.getElementById("status-box").innerText = "CSV vacío";
                     }
                     
                     filtrarLocaciones();
@@ -64,11 +40,12 @@ function cargarDatosDesdeCSV() {
             });
         })
         .catch(error => {
-            document.getElementById("status-box").innerText = "Error al abrir archivo CSV.";
-            console.error("Error en Fetch/PapaParse:", error);
+            document.getElementById("status-box").innerText = "Error de carga";
+            console.error(error);
         });
 }
 
+// Armo las opciones de los selectores según lo que viene en el CSV
 function generarFiltrosDinamicos() {
     const subsecretarias = new Set();
     const regimenes = new Set();
@@ -96,7 +73,6 @@ function generarFiltrosDinamicos() {
 
 function llenarSelect(idSelect, conjuntoValores) {
     const select = document.getElementById(idSelect);
-    if (!select) return;
     select.innerHTML = `<option value="todos">${select.id === 'filter-seguro' ? 'Todas las Coberturas' : (select.id === 'filter-subsecretaria' ? 'Todas' : 'Todos')}</option>`;
     
     Array.from(conjuntoValores).sort().forEach(valor => {
@@ -111,7 +87,6 @@ function llenarSelect(idSelect, conjuntoValores) {
 
 function llenarDatalist(idDatalist, conjuntoValores) {
     const datalist = document.getElementById(idDatalist);
-    if (!datalist) return;
     datalist.innerHTML = ""; 
     Array.from(conjuntoValores).sort().forEach(valor => {
         if(valor !== "") {
@@ -122,21 +97,34 @@ function llenarDatalist(idDatalist, conjuntoValores) {
     });
 }
 
+// Hago foco en el mapa al tocar una tarjeta de la lista
 function enfocarLocacion(id) {
     const marker = marcadoresActivos[id];
-    if (marker && map) {
+    if (marker) {
         map.setView(marker.getLatLng(), 15);
         marker.openPopup();
     }
 }
 
+// Arreglo las coordenadas de Excel agregando el punto decimal si falta
+function formatearCoordenada(val) {
+    if (!val) return NaN;
+    let limpio = val.toString().trim().replace(/,/g, "").replace(/\./g, "");
+    if (!limpio || limpio === "-") return NaN;
+
+    if (!limpio.startsWith("-")) limpio = "-" + limpio;
+    if (limpio.length > 3) limpio = limpio.substring(0, 3) + "." + limpio.substring(3);
+    
+    return parseFloat(limpio);
+}
+
+// Aplico los filtros seleccionados y redibujo los pines y la lista
 function filtrarLocaciones() {
-    if (!markersGroup) return;
     markersGroup.clearLayers();
     marcadoresActivos = {}; 
     
     const contenedorLista = document.getElementById("contenedor-lista");
-    if (contenedorLista) contenedorLista.innerHTML = ""; 
+    contenedorLista.innerHTML = ""; 
 
     const fSubsec = document.getElementById('filter-subsecretaria').value;
     const fRegimen = document.getElementById('filter-regimen').value;
@@ -166,11 +154,9 @@ function filtrarLocaciones() {
         const matchEspacioTexto = (sEspacio === "" || espacioCelda.toLowerCase().includes(sEspacio));
         const matchDireccionTexto = (sDireccion === "" || direccionCelda.toLowerCase().includes(sDireccion));
 
-        let latRaw = loc["LATITUD"] ? loc["LATITUD"].toString().replace(',', '.') : "";
-        let lngRaw = loc["LONGITUD"] ? loc["LONGITUD"].toString().replace(',', '.') : "";
-        
-        const lat = parseFloat(latRaw);
-        const lng = parseFloat(lngRaw);
+        // Limpio las coordenadas por si pasaron desde Excel sin punto
+        const lat = formatearCoordenada(loc["LATITUD"]);
+        const lng = formatearCoordenada(loc["LONGITUD"]);
 
         if (matchSubsec && matchRegimen && matchPertenencia && matchSeguro && matchEspacioTexto && matchDireccionTexto) {
             if (!isNaN(lat) && !isNaN(lng)) {
@@ -213,21 +199,20 @@ function filtrarLocaciones() {
                     </div>
                 `;
 
+                // Agrego el marcador al mapa y creo la tarjeta para el panel lateral
                 const m = L.marker([lat, lng]).bindPopup(popupHTML).addTo(markersGroup);
                 marcadoresActivos[idUnico] = m;
                 
-                if (contenedorLista) {
-                    const itemHTML = `
-                        <div class="list-item" style="border-left-color: ${badgeColorClass === 'propio' ? '#10b981' : (badgeColorClass === 'alquiler' ? '#f59e0b' : '#3b82f6')};" onclick="enfocarLocacion('${idUnico}')">
-                            <h4>${espacioCelda}</h4>
-                            <p>📍 <strong>Dirección:</strong> ${direccionCelda}</p>
-                            <p>🏢 <strong>Subsecretaría:</strong> ${subsecretariaCelda}</p>
-                            <p>📋 <strong>Régimen:</strong> ${regimenCelda} (${pertenenciaCelda || '-'})</p>
-                            <p>🛡️ <strong>Seguro:</strong> ${seguroCelda || 'Sin cobertura registrada'}</p>
-                        </div>
-                    `;
-                    contenedorLista.insertAdjacentHTML('beforeend', itemHTML);
-                }
+                const itemHTML = `
+                    <div class="list-item" style="border-left-color: ${badgeColorClass === 'propio' ? '#10b981' : (badgeColorClass === 'alquiler' ? '#f59e0b' : '#3b82f6')};" onclick="enfocarLocacion('${idUnico}')">
+                        <h4>${espacioCelda}</h4>
+                        <p>📍 <strong>Dirección:</strong> ${direccionCelda}</p>
+                        <p>🏢 <strong>Subsecretaría:</strong> ${subsecretariaCelda}</p>
+                        <p>📋 <strong>Régimen:</strong> ${regimenCelda} (${pertenenciaCelda || '-'})</p>
+                        <p>🛡️ <strong>Seguro:</strong> ${seguroCelda || 'Sin cobertura registrada'}</p>
+                    </div>
+                `;
+                contenedorLista.insertAdjacentHTML('beforeend', itemHTML);
 
                 if (!primerPinValido) primerPinValido = [lat, lng];
                 contadorPines++;
@@ -235,13 +220,11 @@ function filtrarLocaciones() {
         }
     });
 
-    const badgContador = document.getElementById("contador-resultados");
-    if (badgContador) badgContador.innerText = contadorPines;
+    document.getElementById("contador-resultados").innerText = contadorPines;
 
-    if (primerPinValido && map) {
+    if (primerPinValido) {
         map.panTo(primerPinValido);
     }
 }
 
-// Arrancamos el mapa de forma segura al cargar la ventana
-window.onload = inicializarMapa;
+cargarDatosDesdeCSV();
